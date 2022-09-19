@@ -12,7 +12,22 @@ begin
 	using Dates
 	using DataFrames
 	using PlutoUI
-	plotly()
+	using Cobweb: h
+	using FreqTables
+	using HypothesisTests
+	using OnlineStats
+	
+	gr()
+
+	exercise(i, description) = h.div(
+		md"""
+		## Exercise $i
+
+		- $description
+		""";
+		style="border-radius: 5px; padding: 1px 12px 1px 12px; background: #155e75; color: #67e8f9;"
+	)
+	
 	md"(setup) $(PlutoUI.TableOfContents())"
 end
 
@@ -32,8 +47,8 @@ end
 # ╔═╡ 92086a7b-62f9-4141-b7cb-2aaa0fdc8c66
 md"# Exercises"
 
-# ╔═╡ c28f6fb1-2525-472a-9783-3470f641dd6b
-md"## 1. Create a frequency table of the number of crashes by borough."
+# ╔═╡ c4a7b0a7-4f09-4448-8df3-9452b4b45eab
+exercise(1, md"Create a frequency table of the number of crashes by borough.")
 
 # ╔═╡ 71bee884-ffb4-48ef-90d8-b101aed044ef
 # method 1
@@ -46,37 +61,127 @@ end
 # method 2
 combine(nrow, groupby(df, :BOROUGH))
 
-# ╔═╡ 3a14951d-346b-4379-88b5-b9a52be6ba92
-md"## 2. Create an hour variable with integer values from 0 to 23, and plot of the histogram of crashes by hour."
+# ╔═╡ 5a4f9311-5816-4dc1-9840-6f7cc06f23a5
+exercise(2, md"Create an hour variable with integer values from 0 to 23, and plot of the histogram of crashes by hour.")
 
 # ╔═╡ e71c369b-2aaf-43bd-be96-c183ac1b098c
 begin 
-	df2 = copy(df)
-	df2.datetime = DateTime.(string.(df.CRASH_DATE) .* 'T' .* df.CRASH_TIME)
-	df2.hour = hour.(df2.datetime)
-	histogram(df2.hour; xlab="Hour of Day", ylab="Count", label="Crashes", 
+	df.datetime = DateTime.(string.(df.CRASH_DATE) .* 'T' .* df.CRASH_TIME)
+	df.hour = hour.(df.datetime)
+	histogram(df.hour; xlab="Hour of Day", ylab="Count", label="Crashes", 
 		xticks=0:4:24, xlim=(0,24.2), ylim=(0, Inf))
 end
 
-# ╔═╡ fd5869eb-8534-45e6-988b-1a78a31675d4
-md"## 3. Check if the number of persons killed is the summation of the number of pedestrians killed, cyclist killed, and motorists killed. From now on, use the number of persons killed as the sum of the pedestrians, cyclists, and motorists killed."
+# ╔═╡ 2c967d81-6ee6-483a-9b7b-aa137f9bd409
+exercise(3, md"Check if the number of persons killed is the summation of the number of pedestrians killed, cyclist killed, and motorists killed. From now on, use the number of persons killed as the sum of the pedestrians, cyclists, and motorists killed.")
 
 # ╔═╡ bc6a445e-85e2-4217-8261-3d1250460480
+let 
+	are_equal = map(eachrow(df)) do row 
+		row.NUMBER_OF_PERSONS_KILLED == +(
+			row.NUMBER_OF_PEDESTRIANS_KILLED,
+			row.NUMBER_OF_CYCLIST_KILLED,
+			row.NUMBER_OF_MOTORIST_KILLED
+		)
+	end
+	result = round(100mean(are_equal), digits=2)
+	ratio = "$(sum(are_equal)) / $(nrow(df))"
+	Markdown.parse("#### $ratio ($(result)%) rows have a matching sum!")
+end
 
+# ╔═╡ 54c2966f-0152-49c1-b862-da547a8cbd6b
+exercise(4, md"Construct a cross table for the number of persons killed by the contributing factors of vehicle one. Collapse the contributing factors with a count of less than 100 to “other”. Is there any association between the contributing factors and the number of persons killed?")
+
+# ╔═╡ 364dc26c-b994-4a06-9e37-ac9a5d4f11bb
+cross_table = let
+	x = df.CONTRIBUTING_FACTOR_VEHICLE_1
+	cm = countmap(x)
+	small_factors = filter(kv -> kv[2] < 100, cm)
+	df.CONTRIBUTING_FACTOR_VEHICLE_1_COLLAPSE100 = map(x) do factor
+		factor in keys(small_factors) ? "Other" : factor
+	end
+
+	# cross table
+	freqtable(df, 
+		:CONTRIBUTING_FACTOR_VEHICLE_1_COLLAPSE100, 
+		:NUMBER_OF_PERSONS_KILLED
+	)
+end
+
+# ╔═╡ e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
+ChisqTest(cross_table)
+
+# ╔═╡ 5ff69001-b1f9-4545-a3cb-1c73ff6df77a
+exercise(5, md"Create a new variable death which is one if the number of persons killed is 1 or more; and zero otherwise. Construct a cross table for death versus borough. Test the null hypothesis that the two variables are not associated.")
+
+# ╔═╡ bc667107-a348-43b6-a19a-ed8de2fb269a
+begin 
+	df.death = map(df.NUMBER_OF_PERSONS_KILLED) do x 
+		x == 1 ? 1 : 0
+	end
+	death_vs_borough = freqtable(df, :death, :BOROUGH)
+end
+
+# ╔═╡ d6155a22-b3b9-4a6e-988a-71a2f880c0ef
+md"""
+- Question is ill-defined because we have missing values for BOROUGH.
+"""
+
+# ╔═╡ b27d4f0f-5714-400b-a60b-eb1dfca05d13
+ChisqTest(death_vs_borough)
+
+# ╔═╡ b5beea57-a135-48f2-b47b-6afe4e0b9433
+exercise(6, md"Visualize the crashes using their latitude and longitude (and time, possibly in an animation).")
+
+# ╔═╡ c7b372c4-456d-43da-8521-61ccbce0532c
+let 
+	df2 = filter(df) do row 
+		!ismissing(row.LONGITUDE) && row.LONGITUDE > 0
+			!ismissing(row.LATITUDE) && row.LATITUDE > 0
+			
+	end
+	long_lims = extrema(df2.LONGITUDE)
+	lat_lims = extrema(df2.LATITUDE)
+
+	anim = @animate for i in 0:23
+		subset = filter(row -> row.hour == i, df2)
+		scatter(subset.LONGITUDE, df2.LATITUDE; title="Crashes in hour $i", 
+			label="", xlim=long_lims, ylim=lat_lims, xlab="Longitude", 
+			ylab="Latitude")
+	end
+	gif(anim, fps=4)
+end
+
+# ╔═╡ 7bfa4449-f2d8-4692-b626-20cf35e8d4be
+exercise(7, md"Fit a logistic model with death as the outcome variable and covariates that are available in the data or can be engineered from the data. Example covariates are crash hour, borough, number of vehicles involved, etc. Interprete your results.")
+
+# ╔═╡ bc33075b-987c-42ce-9a2d-815ba034cad8
+exercise(8, md"Aggregate the data to the zip-code level and connect with the census data at the zip-code level.")
+
+# ╔═╡ 1abb1322-1bc3-451b-ae99-a31d4586386b
+exercise(9, md"Visualize and model the count of crashes at the zip-code level.")
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+Cobweb = "ec354790-cf28-43e8-bb59-b484409b7bad"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+FreqTables = "da1fdf0e-e0ff-5433-a45f-9bb5ff651cb1"
+HypothesisTests = "09f84164-cd44-5f33-b23f-e6b0d136a0d5"
+OnlineStats = "a15396b6-48d5-5d58-9928-6d29437db91e"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 StatsPlots = "f3b207a7-027a-5e70-b257-86293d7955fd"
 
 [compat]
 CSV = "~0.10.4"
+Cobweb = "~0.2.2"
 DataFrames = "~1.3.6"
+FreqTables = "~0.4.5"
+HypothesisTests = "~0.10.10"
+OnlineStats = "~1.5.14"
 PlutoUI = "~0.7.40"
 StatsBase = "~0.33.21"
 StatsPlots = "~0.15.3"
@@ -88,7 +193,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.8.1"
 manifest_format = "2.0"
-project_hash = "a6c5f519a191c691c92b1dedf687efc1f73e3cfb"
+project_hash = "b5c583383443007130cfc4f2c30505b75fde1e4a"
 
 [[deps.AbstractFFTs]]
 deps = ["ChainRulesCore", "LinearAlgebra"]
@@ -101,6 +206,11 @@ deps = ["Pkg"]
 git-tree-sha1 = "8eaf9f1b4921132a4cff3f36a1d9ba923b14a481"
 uuid = "6e696c72-6542-2067-7265-42206c756150"
 version = "1.1.4"
+
+[[deps.AbstractTrees]]
+git-tree-sha1 = "5c0b629df8a5566a06f5fef5100b53ea56e465a0"
+uuid = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
+version = "0.4.2"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra"]
@@ -160,6 +270,12 @@ git-tree-sha1 = "f641eb0a4f00c343bbc32346e1217b86f3ce9dad"
 uuid = "49dc2e85-a5d0-5ad3-a950-438e2897f1b9"
 version = "0.5.1"
 
+[[deps.CategoricalArrays]]
+deps = ["DataAPI", "Future", "Missings", "Printf", "Requires", "Statistics", "Unicode"]
+git-tree-sha1 = "5f5a975d996026a8dd877c35fe26a7b8179c02ba"
+uuid = "324d7699-5711-5eae-9e2f-1d82baa6b597"
+version = "0.10.6"
+
 [[deps.ChainRulesCore]]
 deps = ["Compat", "LinearAlgebra", "SparseArrays"]
 git-tree-sha1 = "dc4405cee4b2fe9e1108caec2d760b7ea758eca2"
@@ -177,6 +293,12 @@ deps = ["Distances", "LinearAlgebra", "NearestNeighbors", "Printf", "SparseArray
 git-tree-sha1 = "75479b7df4167267d75294d14b58244695beb2ac"
 uuid = "aaaa29a8-35af-508c-8bc3-b662a17a0fe5"
 version = "0.14.2"
+
+[[deps.Cobweb]]
+deps = ["DefaultApplication", "Markdown", "Scratch", "StructTypes"]
+git-tree-sha1 = "7c0b7a0273c7b25b1a4638b3d6ceaad890131761"
+uuid = "ec354790-cf28-43e8-bb59-b484409b7bad"
+version = "0.2.2"
 
 [[deps.CodecZlib]]
 deps = ["TranscodingStreams", "Zlib_jll"]
@@ -208,6 +330,16 @@ git-tree-sha1 = "417b0ed7b8b838aa6ca0a87aadf1bb9eb111ce40"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.8"
 
+[[deps.Combinatorics]]
+git-tree-sha1 = "08c8b6831dc00bfea825826be0bc8336fc369860"
+uuid = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+version = "1.0.2"
+
+[[deps.CommonSolve]]
+git-tree-sha1 = "332a332c97c7071600984b3c31d9067e1a4e6e25"
+uuid = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
+version = "0.2.1"
+
 [[deps.Compat]]
 deps = ["Dates", "LinearAlgebra", "UUIDs"]
 git-tree-sha1 = "5856d3031cdb1f3b2b6340dfdc66b6d9a149a374"
@@ -218,6 +350,12 @@ version = "4.2.0"
 deps = ["Artifacts", "Libdl"]
 uuid = "e66e0078-7015-5450-92f7-15fbd957f2ae"
 version = "0.5.2+0"
+
+[[deps.ConstructionBase]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "fb21ddd70a051d882a1686a5a550990bbe371a95"
+uuid = "187b0558-2788-49d3-abe0-74a17ed4e7c9"
+version = "1.4.1"
 
 [[deps.Contour]]
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
@@ -260,6 +398,12 @@ version = "0.4.13"
 [[deps.Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
+
+[[deps.DefaultApplication]]
+deps = ["InteractiveUtils"]
+git-tree-sha1 = "c0dfa5a35710a193d83f03124356eef3386688fc"
+uuid = "3f0dd361-4fe0-5fc6-8523-80b14ec94d85"
+version = "1.1.0"
 
 [[deps.DelimitedFiles]]
 deps = ["Mmap"]
@@ -373,6 +517,12 @@ git-tree-sha1 = "87eb71354d8ec1a96d4a7636bd57a7347dde3ef9"
 uuid = "d7e528f0-a631-5988-bf34-fe36492bcfd7"
 version = "2.10.4+0"
 
+[[deps.FreqTables]]
+deps = ["CategoricalArrays", "Missings", "NamedArrays", "Tables"]
+git-tree-sha1 = "488ad2dab30fd2727ee65451f790c81ed454666d"
+uuid = "da1fdf0e-e0ff-5433-a45f-9bb5ff651cb1"
+version = "0.4.5"
+
 [[deps.FriBidi_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "aa31987c2ba8704e23c6c8ba8a4f769d5d7e4f91"
@@ -453,6 +603,12 @@ deps = ["Tricks"]
 git-tree-sha1 = "c47c5fa4c5308f27ccaac35504858d8914e102f9"
 uuid = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
 version = "0.9.4"
+
+[[deps.HypothesisTests]]
+deps = ["Combinatorics", "Distributions", "LinearAlgebra", "Random", "Rmath", "Roots", "Statistics", "StatsBase"]
+git-tree-sha1 = "10b23fc711999d34f6888ab6df4c510def193fd9"
+uuid = "09f84164-cd44-5f33-b23f-e6b0d136a0d5"
+version = "0.10.10"
 
 [[deps.IOCapture]]
 deps = ["Logging", "Random"]
@@ -711,6 +867,12 @@ git-tree-sha1 = "a7c3d1da1189a1c2fe843a3bfa04d18d20eb3211"
 uuid = "77ba4419-2d1f-58cd-9bb1-8ffee604a2e3"
 version = "1.0.1"
 
+[[deps.NamedArrays]]
+deps = ["Combinatorics", "DataStructures", "DelimitedFiles", "InvertedIndices", "LinearAlgebra", "Random", "Requires", "SparseArrays", "Statistics"]
+git-tree-sha1 = "2fd5787125d1a93fbe30961bd841707b8a80d75b"
+uuid = "86f7a689-2022-50b4-a561-43c23ac3c673"
+version = "0.9.6"
+
 [[deps.NearestNeighbors]]
 deps = ["Distances", "StaticArrays"]
 git-tree-sha1 = "0e353ed734b1747fc20cd4cba0edd9ac027eff6a"
@@ -737,6 +899,18 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "887579a3eb005446d514ab7aeac5d1d027658b8f"
 uuid = "e7412a2a-1a6e-54c0-be00-318e2571c051"
 version = "1.3.5+1"
+
+[[deps.OnlineStats]]
+deps = ["AbstractTrees", "Dates", "LinearAlgebra", "OnlineStatsBase", "OrderedCollections", "Random", "RecipesBase", "Statistics", "StatsBase"]
+git-tree-sha1 = "e81f7f4179becdb6c365fb5a44042cfe7d50b77a"
+uuid = "a15396b6-48d5-5d58-9928-6d29437db91e"
+version = "1.5.14"
+
+[[deps.OnlineStatsBase]]
+deps = ["AbstractTrees", "Dates", "LinearAlgebra", "OrderedCollections", "Statistics", "StatsBase"]
+git-tree-sha1 = "60e587c99ea261d1c452d2acb1f3a481e772660c"
+uuid = "925886fa-5bf2-5e8e-b522-a9147a512338"
+version = "1.5.0"
 
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
@@ -912,6 +1086,12 @@ git-tree-sha1 = "68db32dff12bb6127bac73c209881191bf0efbb7"
 uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
 version = "0.3.0+0"
 
+[[deps.Roots]]
+deps = ["CommonSolve", "Printf", "Setfield"]
+git-tree-sha1 = "90a03cebb786c568d3c1f0fb2f71dcb26115e13e"
+uuid = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
+version = "2.0.3"
+
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
 version = "0.7.0"
@@ -930,6 +1110,12 @@ version = "1.3.13"
 
 [[deps.Serialization]]
 uuid = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+
+[[deps.Setfield]]
+deps = ["ConstructionBase", "Future", "MacroTools", "StaticArraysCore"]
+git-tree-sha1 = "e2cc6d8c88613c05e1defb55170bf5ff211fbeac"
+uuid = "efcf1570-3423-57d1-acb7-fd33fddbac46"
+version = "1.1.1"
 
 [[deps.SharedArrays]]
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
@@ -1008,6 +1194,12 @@ deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distribut
 git-tree-sha1 = "3e59e005c5caeb1a57a90b17f582cbfc2c8da8f7"
 uuid = "f3b207a7-027a-5e70-b257-86293d7955fd"
 version = "0.15.3"
+
+[[deps.StructTypes]]
+deps = ["Dates", "UUIDs"]
+git-tree-sha1 = "ca4bccb03acf9faaf4137a9abc1881ed1841aa70"
+uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+version = "1.10.0"
 
 [[deps.SuiteSparse]]
 deps = ["Libdl", "LinearAlgebra", "Serialization", "SparseArrays"]
@@ -1332,14 +1524,26 @@ version = "1.4.1+0"
 # ╟─c17fde86-3846-11ed-08c9-7578912ec511
 # ╟─283ae22b-7d10-45a9-9470-584a996549be
 # ╟─704f34f7-0dd1-41f4-a7f3-620f7b608ca1
-# ╠═5d7a6d11-d087-4e02-890a-7df1d15d8514
+# ╟─5d7a6d11-d087-4e02-890a-7df1d15d8514
 # ╟─92086a7b-62f9-4141-b7cb-2aaa0fdc8c66
-# ╟─c28f6fb1-2525-472a-9783-3470f641dd6b
+# ╟─c4a7b0a7-4f09-4448-8df3-9452b4b45eab
 # ╠═71bee884-ffb4-48ef-90d8-b101aed044ef
 # ╠═6f7c3df2-34f9-4184-801d-7a40f2926246
-# ╟─3a14951d-346b-4379-88b5-b9a52be6ba92
-# ╠═e71c369b-2aaf-43bd-be96-c183ac1b098c
-# ╠═fd5869eb-8534-45e6-988b-1a78a31675d4
-# ╠═bc6a445e-85e2-4217-8261-3d1250460480
+# ╟─5a4f9311-5816-4dc1-9840-6f7cc06f23a5
+# ╟─e71c369b-2aaf-43bd-be96-c183ac1b098c
+# ╟─2c967d81-6ee6-483a-9b7b-aa137f9bd409
+# ╟─bc6a445e-85e2-4217-8261-3d1250460480
+# ╟─54c2966f-0152-49c1-b862-da547a8cbd6b
+# ╟─364dc26c-b994-4a06-9e37-ac9a5d4f11bb
+# ╠═e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
+# ╟─5ff69001-b1f9-4545-a3cb-1c73ff6df77a
+# ╠═bc667107-a348-43b6-a19a-ed8de2fb269a
+# ╟─d6155a22-b3b9-4a6e-988a-71a2f880c0ef
+# ╠═b27d4f0f-5714-400b-a60b-eb1dfca05d13
+# ╟─b5beea57-a135-48f2-b47b-6afe4e0b9433
+# ╠═c7b372c4-456d-43da-8521-61ccbce0532c
+# ╟─7bfa4449-f2d8-4692-b626-20cf35e8d4be
+# ╟─bc33075b-987c-42ce-9a2d-815ba034cad8
+# ╟─1abb1322-1bc3-451b-ae99-a31d4586386b
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002
