@@ -16,6 +16,8 @@ begin
 	using FreqTables
 	using HypothesisTests
 	using OnlineStats
+	using GeoJSON
+	using GLM
 	
 	gr()
 
@@ -34,42 +36,56 @@ end
 # ╔═╡ 283ae22b-7d10-45a9-9470-584a996549be
 md"# Load Data"
 
-# ╔═╡ 704f34f7-0dd1-41f4-a7f3-620f7b608ca1
-datapath = joinpath(@__DIR__, "data", "nyc_mv_collisions_202201.csv")
+# ╔═╡ c2d7156f-7d2c-4aa4-8972-610751ade61b
+md"""
+We load the data with [**CSV.jl**](https://github.com/JuliaData/CSV.jl).  We are providing the following keyword arguments to `CSV.read`:
+- `dateformat`: Tell Julia how dates are formatted.
+- `normalizenames`: Replace spaces with underscores in variable names.
+- `stringtype`: Tell Julia to use the `Base.String` type for strings.
+  - There are several string types **CSV.jl** can use for various performance reasons, but `String` is often the easiest to work with.
+"""
 
 # ╔═╡ 5d7a6d11-d087-4e02-890a-7df1d15d8514
 begin 
-	df =  CSV.read(datapath, DataFrame; dateformat="mm/dd/yyyy", 
-		normalizenames=true)
+	datapath = joinpath(@__DIR__, "data", "nyc_mv_collisions_202201.csv")
+	
+	df =  CSV.read(datapath, DataFrame; dateformat = "mm/dd/yyyy", 
+		normalizenames = true, stringtype = String)
+	
 	describe(df)
 end
 
 # ╔═╡ 92086a7b-62f9-4141-b7cb-2aaa0fdc8c66
-md"# Exercises"
+md"# Scientific Exercises"
 
 # ╔═╡ c4a7b0a7-4f09-4448-8df3-9452b4b45eab
 exercise(1, md"Create a frequency table of the number of crashes by borough.")
 
-# ╔═╡ 71bee884-ffb4-48ef-90d8-b101aed044ef
-# method 1
-let 
-	out = DataFrame((BOROUGH=k, COUNT=v) for (k,v) in countmap(df.BOROUGH))
-	sort(out, :COUNT; rev=true)
-end
+# ╔═╡ 63b3f088-fe29-4771-ac01-a4f299fa3a54
+md"""
+- **Split**: Group by `BOROUGH`.
+- **Apply/Combine**: Use `combine` to return the `nrow` of each group.
+"""
 
 # ╔═╡ 6f7c3df2-34f9-4184-801d-7a40f2926246
-# method 2
-combine(nrow, groupby(df, :BOROUGH))
+combine(groupby(df, :BOROUGH), nrow => :count)
 
 # ╔═╡ 5a4f9311-5816-4dc1-9840-6f7cc06f23a5
 exercise(2, md"Create an hour variable with integer values from 0 to 23, and plot of the histogram of crashes by hour.")
 
+# ╔═╡ 7aae64cb-3888-4d79-898f-65ccfb17a5d8
+md"""
+- First, we use Julia's **`Dates`** standard library to combine the `CRASH_DATE`/`CRASH_TIME` fields into `Dates.DateTime`s.  Note the "dot" syntax is used for [broadcasting](https://docs.julialang.org/en/v1/manual/arrays/#Broadcasting) in Julia.
+- We then extract the `Dates.hour`.
+"""
+
 # ╔═╡ e71c369b-2aaf-43bd-be96-c183ac1b098c
 begin 
-	df.datetime = DateTime.(string.(df.CRASH_DATE) .* 'T' .* df.CRASH_TIME)
+	df.datetime = DateTime.(df.CRASH_DATE, Time.(df.CRASH_TIME))
 	df.hour = hour.(df.datetime)
+	
 	histogram(df.hour; xlab="Hour of Day", ylab="Count", label="Crashes", 
-		xticks=0:4:24, xlim=(0,24.2), ylim=(0, Inf))
+		xticks=0:4:24, xlim=(0,24), ylim=(0, Inf))
 end
 
 # ╔═╡ 2c967d81-6ee6-483a-9b7b-aa137f9bd409
@@ -77,16 +93,20 @@ exercise(3, md"Check if the number of persons killed is the summation of the num
 
 # ╔═╡ bc6a445e-85e2-4217-8261-3d1250460480
 let 
-	are_equal = map(eachrow(df)) do row 
-		row.NUMBER_OF_PERSONS_KILLED == +(
-			row.NUMBER_OF_PEDESTRIANS_KILLED,
-			row.NUMBER_OF_CYCLIST_KILLED,
-			row.NUMBER_OF_MOTORIST_KILLED
-		)
-	end
-	result = round(100mean(are_equal), digits=2)
-	ratio = "$(sum(are_equal)) / $(nrow(df))"
-	Markdown.parse("#### $ratio ($(result)%) rows have a matching sum!")
+	# create "nkilled" variable
+	df.nkilled = map(+,
+		df.NUMBER_OF_PEDESTRIANS_KILLED,
+		df.NUMBER_OF_CYCLIST_KILLED,
+		df.NUMBER_OF_MOTORIST_KILLED
+	)
+	
+	# Check "NUMBER_OF_PERSONS_KILLED" vs. "nkilled"
+	n = nrow(df)
+	n2 = sum(df.NUMBER_OF_PERSONS_KILLED .== df.nkilled)
+	perc = round(100n2 / n, digits=2)
+	
+	# Pretty print the result
+	Markdown.parse("#### $n / $n2 ($perc%) rows have a matching sum!")
 end
 
 # ╔═╡ 54c2966f-0152-49c1-b862-da547a8cbd6b
@@ -94,66 +114,89 @@ exercise(4, md"Construct a cross table for the number of persons killed by the c
 
 # ╔═╡ 364dc26c-b994-4a06-9e37-ac9a5d4f11bb
 cross_table = let
-	x = df.CONTRIBUTING_FACTOR_VEHICLE_1
-	cm = countmap(x)
+	# get countmap of factors
+	cm = countmap(df.CONTRIBUTING_FACTOR_VEHICLE_1)
+	# get factors that occur <100 times
 	small_factors = filter(kv -> kv[2] < 100, cm)
-	df.CONTRIBUTING_FACTOR_VEHICLE_1_COLLAPSE100 = map(x) do factor
-		factor in keys(small_factors) ? "Other" : factor
-	end
+	# recode rare factors as "Other"
+	_recode(x) = x in keys(small_factors) ? "Other" : x
+	df.factor1 = _recode.(df.CONTRIBUTING_FACTOR_VEHICLE_1)
 
 	# cross table
-	freqtable(df, 
-		:CONTRIBUTING_FACTOR_VEHICLE_1_COLLAPSE100, 
-		:NUMBER_OF_PERSONS_KILLED
-	)
+	freqtable(df, :factor1, :nkilled)
 end
 
 # ╔═╡ e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
+# Weak evidence of association between :factor1 and :nkilled
 ChisqTest(cross_table)
 
 # ╔═╡ 5ff69001-b1f9-4545-a3cb-1c73ff6df77a
 exercise(5, md"Create a new variable death which is one if the number of persons killed is 1 or more; and zero otherwise. Construct a cross table for death versus borough. Test the null hypothesis that the two variables are not associated.")
 
-# ╔═╡ bc667107-a348-43b6-a19a-ed8de2fb269a
-begin 
-	df.death = map(df.NUMBER_OF_PERSONS_KILLED) do x 
-		x == 1 ? 1 : 0
-	end
-	death_vs_borough = freqtable(df, :death, :BOROUGH)
-end
-
 # ╔═╡ d6155a22-b3b9-4a6e-988a-71a2f880c0ef
 md"""
-- Question is ill-defined because we have missing values for BOROUGH.
+- We cannot answer this question until we decide what to do with the missing values for `BOROUGH`.
+- Let's include them as a group.
 """
 
+# ╔═╡ bc667107-a348-43b6-a19a-ed8de2fb269a
+begin 
+	df.death = df.nkilled .> 0
+	df.BOROUGH2 = string.(df.BOROUGH)
+	death_vs_borough = freqtable(df, :BOROUGH2, :death)
+end
+
 # ╔═╡ b27d4f0f-5714-400b-a60b-eb1dfca05d13
+# Hmm, why DomainError?
 ChisqTest(death_vs_borough)
 
 # ╔═╡ b5beea57-a135-48f2-b47b-6afe4e0b9433
 exercise(6, md"Visualize the crashes using their latitude and longitude (and time, possibly in an animation).")
 
+# ╔═╡ 687529e2-f44a-42de-aa3b-2e5947d5f673
+md"""
+- Downloaded GeoJSON of Borough boundaries [here](https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm).
+"""
+
+# ╔═╡ 91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
+features = GeoJSON.read(read(joinpath(@__DIR__, "data", "boundaries.geojson")))
+
+# ╔═╡ ba735e38-e73d-479b-86ae-8a0b4fea54be
+
+
 # ╔═╡ c7b372c4-456d-43da-8521-61ccbce0532c
 let 
+	# create map to plot over
+	borough_map = plot()
+	for g in features.geometry 
+		plot!(borough_map, g, fillalpha=0, aspect_ratio=1)
+	end
+
+	# filter out bad values of lat/lon
 	df2 = filter(df) do row 
 		!ismissing(row.LONGITUDE) && row.LONGITUDE > 0
 			!ismissing(row.LATITUDE) && row.LATITUDE > 0
 			
 	end
-	long_lims = extrema(df2.LONGITUDE)
-	lat_lims = extrema(df2.LATITUDE)
 
+	# Create animation (1 hour/frame)
 	anim = @animate for i in 0:23
 		subset = filter(row -> row.hour == i, df2)
-		scatter(subset.LONGITUDE, df2.LATITUDE; title="Crashes in hour $i", 
-			label="", xlim=long_lims, ylim=lat_lims, xlab="Longitude", 
-			ylab="Latitude")
+		plot(borough_map)
+		scatter!(subset.LONGITUDE, df2.LATITUDE; title="Crashes in hour $i", 
+			label="", xlab="Longitude", ylab="Latitude", markerstrokewidth=0, markersize=3)
 	end
 	gif(anim, fps=4)
 end
 
 # ╔═╡ 7bfa4449-f2d8-4692-b626-20cf35e8d4be
 exercise(7, md"Fit a logistic model with death as the outcome variable and covariates that are available in the data or can be engineered from the data. Example covariates are crash hour, borough, number of vehicles involved, etc. Interprete your results.")
+
+# ╔═╡ 5cf3f941-3bf0-4698-bdfc-10fa10df2184
+logmodel = let 
+	f = @formula(death ~ hour + BOROUGH)
+	glm(f, df, Binomial())
+end
 
 # ╔═╡ bc33075b-987c-42ce-9a2d-815ba034cad8
 exercise(8, md"Aggregate the data to the zip-code level and connect with the census data at the zip-code level.")
@@ -169,6 +212,8 @@ Cobweb = "ec354790-cf28-43e8-bb59-b484409b7bad"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 FreqTables = "da1fdf0e-e0ff-5433-a45f-9bb5ff651cb1"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+GeoJSON = "61d90e0f-e114-555e-ac52-39dfb47a3ef9"
 HypothesisTests = "09f84164-cd44-5f33-b23f-e6b0d136a0d5"
 OnlineStats = "a15396b6-48d5-5d58-9928-6d29437db91e"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
@@ -180,6 +225,8 @@ CSV = "~0.10.4"
 Cobweb = "~0.2.2"
 DataFrames = "~1.3.6"
 FreqTables = "~0.4.5"
+GLM = "~1.8.0"
+GeoJSON = "~0.6.1"
 HypothesisTests = "~0.10.10"
 OnlineStats = "~1.5.14"
 PlutoUI = "~0.7.40"
@@ -193,7 +240,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.8.1"
 manifest_format = "2.0"
-project_hash = "b5c583383443007130cfc4f2c30505b75fde1e4a"
+project_hash = "933f681ae4c5bc6957f9a314d2dc1811455d4114"
 
 [[deps.AbstractFFTs]]
 deps = ["ChainRulesCore", "LinearAlgebra"]
@@ -454,6 +501,11 @@ git-tree-sha1 = "bad72f730e9e91c08d9427d5e8db95478a3c323d"
 uuid = "2e619515-83b5-522b-bb60-26c02a35a201"
 version = "2.4.8+0"
 
+[[deps.Extents]]
+git-tree-sha1 = "5e1e4c53fa39afe63a7d356e30452249365fba99"
+uuid = "411431e0-e8b7-467b-b5e0-f676ba4f2910"
+version = "0.1.1"
+
 [[deps.FFMPEG]]
 deps = ["FFMPEG_jll"]
 git-tree-sha1 = "b57e3acbe22f8484b4b5ff66a7499717fe1a9cc8"
@@ -461,10 +513,10 @@ uuid = "c87230d0-a227-11e9-1b43-d7ebe4e7570a"
 version = "0.4.1"
 
 [[deps.FFMPEG_jll]]
-deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "JLLWrappers", "LAME_jll", "Libdl", "Ogg_jll", "OpenSSL_jll", "Opus_jll", "Pkg", "Zlib_jll", "libaom_jll", "libass_jll", "libfdk_aac_jll", "libvorbis_jll", "x264_jll", "x265_jll"]
-git-tree-sha1 = "ccd479984c7838684b3ac204b716c89955c76623"
+deps = ["Artifacts", "Bzip2_jll", "FreeType2_jll", "FriBidi_jll", "JLLWrappers", "LAME_jll", "Libdl", "Ogg_jll", "OpenSSL_jll", "Opus_jll", "PCRE2_jll", "Pkg", "Zlib_jll", "libaom_jll", "libass_jll", "libfdk_aac_jll", "libvorbis_jll", "x264_jll", "x265_jll"]
+git-tree-sha1 = "74faea50c1d007c85837327f6775bea60b5492dd"
 uuid = "b22a6f82-2f65-5046-a5b2-351ab43fb4e5"
-version = "4.4.2+0"
+version = "4.4.2+2"
 
 [[deps.FFTW]]
 deps = ["AbstractFFTs", "FFTW_jll", "LinearAlgebra", "MKL_jll", "Preferences", "Reexport"]
@@ -539,6 +591,12 @@ git-tree-sha1 = "d972031d28c8c8d9d7b41a536ad7bb0c2579caca"
 uuid = "0656b61e-2033-5cc2-a64a-77c0f6c09b89"
 version = "3.3.8+0"
 
+[[deps.GLM]]
+deps = ["Distributions", "LinearAlgebra", "Printf", "Reexport", "SparseArrays", "SpecialFunctions", "Statistics", "StatsBase", "StatsFuns", "StatsModels"]
+git-tree-sha1 = "039118892476c2bf045a43b88fcb75ed566000ff"
+uuid = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
+version = "1.8.0"
+
 [[deps.GR]]
 deps = ["Base64", "DelimitedFiles", "GR_jll", "HTTP", "JSON", "Libdl", "LinearAlgebra", "Pkg", "Printf", "Random", "RelocatableFolders", "Serialization", "Sockets", "Test", "UUIDs"]
 git-tree-sha1 = "cf0a9940f250dc3cb6cc6c6821b4bf8a4286cf9c"
@@ -550,6 +608,29 @@ deps = ["Artifacts", "Bzip2_jll", "Cairo_jll", "FFMPEG_jll", "Fontconfig_jll", "
 git-tree-sha1 = "3697c23d09d5ec6f2088faa68f0d926b6889b5be"
 uuid = "d2c73de3-f751-5644-a686-071e5b155ba9"
 version = "0.67.0+0"
+
+[[deps.GeoFormatTypes]]
+git-tree-sha1 = "434166198434a5c2fcc0a1a59d22c3b0ad460889"
+uuid = "68eda718-8dee-11e9-39e7-89f7f65f511f"
+version = "0.4.1"
+
+[[deps.GeoInterface]]
+deps = ["Extents"]
+git-tree-sha1 = "fb28b5dc239d0174d7297310ef7b84a11804dfab"
+uuid = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
+version = "1.0.1"
+
+[[deps.GeoInterfaceRecipes]]
+deps = ["GeoInterface", "RecipesBase"]
+git-tree-sha1 = "29e1ec25cfb6762f503a19495aec347acf867a9e"
+uuid = "0329782f-3d07-4b52-b9f6-d3137cf03c7a"
+version = "1.0.0"
+
+[[deps.GeoJSON]]
+deps = ["Extents", "GeoFormatTypes", "GeoInterface", "GeoInterfaceRecipes", "JSON3", "Tables"]
+git-tree-sha1 = "dcea98b8af181b2c396d81f97959ad3baf6881fc"
+uuid = "61d90e0f-e114-555e-ac52-39dfb47a3ef9"
+version = "0.6.1"
 
 [[deps.Gettext_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Libiconv_jll", "Pkg", "XML2_jll"]
@@ -675,6 +756,12 @@ deps = ["Dates", "Mmap", "Parsers", "Unicode"]
 git-tree-sha1 = "3c837543ddb02250ef42f4738347454f95079d4e"
 uuid = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 version = "0.21.3"
+
+[[deps.JSON3]]
+deps = ["Dates", "Mmap", "Parsers", "StructTypes", "UUIDs"]
+git-tree-sha1 = "f1572de22c866dc92aea032bc89c2b137cbddd6a"
+uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+version = "1.10.0"
 
 [[deps.JpegTurbo_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
@@ -945,6 +1032,11 @@ git-tree-sha1 = "85f8e6578bf1f9ee0d11e7bb1b1456435479d47c"
 uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 version = "1.4.1"
 
+[[deps.PCRE2_jll]]
+deps = ["Artifacts", "Libdl"]
+uuid = "efcefdf7-47ab-520b-bdef-62a2eaa19f15"
+version = "10.40.0+0"
+
 [[deps.PCRE_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "b2a7af664e098055a7529ad1a900ded962bca488"
@@ -1121,6 +1213,11 @@ version = "1.1.1"
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
+[[deps.ShiftedArrays]]
+git-tree-sha1 = "503688b59397b3307443af35cd953a13e8005c16"
+uuid = "1277b4bf-5013-50f5-be3d-901d8477a67a"
+version = "2.0.0"
+
 [[deps.Showoff]]
 deps = ["Dates", "Grisu"]
 git-tree-sha1 = "91eddf657aca81df9ae6ceb20b959ae5653ad1de"
@@ -1188,6 +1285,12 @@ deps = ["ChainRulesCore", "HypergeometricFunctions", "InverseFunctions", "Irrati
 git-tree-sha1 = "5783b877201a82fc0014cbf381e7e6eb130473a4"
 uuid = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 version = "1.0.1"
+
+[[deps.StatsModels]]
+deps = ["DataAPI", "DataStructures", "LinearAlgebra", "Printf", "REPL", "ShiftedArrays", "SparseArrays", "StatsBase", "StatsFuns", "Tables"]
+git-tree-sha1 = "a5e15f27abd2692ccb61a99e0854dfb7d48017db"
+uuid = "3eaba693-59b7-5ba5-a881-562e759f1c8d"
+version = "0.6.33"
 
 [[deps.StatsPlots]]
 deps = ["AbstractFFTs", "Clustering", "DataStructures", "DataValues", "Distributions", "Interpolations", "KernelDensity", "LinearAlgebra", "MultivariateStats", "NaNMath", "Observables", "Plots", "RecipesBase", "RecipesPipeline", "Reexport", "StatsBase", "TableOperations", "Tables", "Widgets"]
@@ -1521,28 +1624,33 @@ version = "1.4.1+0"
 """
 
 # ╔═╡ Cell order:
-# ╟─c17fde86-3846-11ed-08c9-7578912ec511
+# ╠═c17fde86-3846-11ed-08c9-7578912ec511
 # ╟─283ae22b-7d10-45a9-9470-584a996549be
-# ╟─704f34f7-0dd1-41f4-a7f3-620f7b608ca1
+# ╟─c2d7156f-7d2c-4aa4-8972-610751ade61b
 # ╟─5d7a6d11-d087-4e02-890a-7df1d15d8514
 # ╟─92086a7b-62f9-4141-b7cb-2aaa0fdc8c66
 # ╟─c4a7b0a7-4f09-4448-8df3-9452b4b45eab
-# ╠═71bee884-ffb4-48ef-90d8-b101aed044ef
-# ╠═6f7c3df2-34f9-4184-801d-7a40f2926246
+# ╟─63b3f088-fe29-4771-ac01-a4f299fa3a54
+# ╟─6f7c3df2-34f9-4184-801d-7a40f2926246
 # ╟─5a4f9311-5816-4dc1-9840-6f7cc06f23a5
+# ╟─7aae64cb-3888-4d79-898f-65ccfb17a5d8
 # ╟─e71c369b-2aaf-43bd-be96-c183ac1b098c
 # ╟─2c967d81-6ee6-483a-9b7b-aa137f9bd409
 # ╟─bc6a445e-85e2-4217-8261-3d1250460480
 # ╟─54c2966f-0152-49c1-b862-da547a8cbd6b
-# ╟─364dc26c-b994-4a06-9e37-ac9a5d4f11bb
+# ╠═364dc26c-b994-4a06-9e37-ac9a5d4f11bb
 # ╠═e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
 # ╟─5ff69001-b1f9-4545-a3cb-1c73ff6df77a
-# ╠═bc667107-a348-43b6-a19a-ed8de2fb269a
 # ╟─d6155a22-b3b9-4a6e-988a-71a2f880c0ef
+# ╠═bc667107-a348-43b6-a19a-ed8de2fb269a
 # ╠═b27d4f0f-5714-400b-a60b-eb1dfca05d13
 # ╟─b5beea57-a135-48f2-b47b-6afe4e0b9433
-# ╠═c7b372c4-456d-43da-8521-61ccbce0532c
+# ╟─687529e2-f44a-42de-aa3b-2e5947d5f673
+# ╠═91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
+# ╠═ba735e38-e73d-479b-86ae-8a0b4fea54be
+# ╟─c7b372c4-456d-43da-8521-61ccbce0532c
 # ╟─7bfa4449-f2d8-4692-b626-20cf35e8d4be
+# ╠═5cf3f941-3bf0-4698-bdfc-10fa10df2184
 # ╟─bc33075b-987c-42ce-9a2d-815ba034cad8
 # ╟─1abb1322-1bc3-451b-ae99-a31d4586386b
 # ╟─00000000-0000-0000-0000-000000000001
