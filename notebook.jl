@@ -1,8 +1,18 @@
 ### A Pluto.jl notebook ###
-# v0.19.13
+# v0.19.14
 
 using Markdown
 using InteractiveUtils
+
+# This Pluto notebook uses @bind for interactivity. When running this notebook outside of Pluto, the following 'mock version' of @bind gives bound variables a default value (instead of an error).
+macro bind(def, element)
+    quote
+        local iv = try Base.loaded_modules[Base.PkgId(Base.UUID("6e696c72-6542-2067-7265-42206c756150"), "AbstractPlutoDingetjes")].Bonds.initial_value catch; b -> missing; end
+        local el = $(esc(element))
+        global $(esc(def)) = Core.applicable(Base.get, el) ? Base.get(el) : iv(el)
+        el
+    end
+end
 
 # ╔═╡ c17fde86-3846-11ed-08c9-7578912ec511
 begin
@@ -21,6 +31,7 @@ begin
 	using OnlineStats
 	using GeoJSON
 	using GLM
+	using RCall
 	
 	gr()
 
@@ -116,8 +127,15 @@ let
 end
 
 # ╔═╡ 89d270f1-95ec-491e-a007-5ddcdc2e642d
-# Only one row has a sum that doesn't match
-df[df.NUMBER_OF_PERSONS_KILLED .!= df.nkilled, r"KILLED"]
+let
+	row = df[df.NUMBER_OF_PERSONS_KILLED .!= df.nkilled, r"KILLED"]
+	
+	md"""
+	##### Row that doesn't have a matching sum:
+
+	$row
+	"""
+end
 
 # ╔═╡ 54c2966f-0152-49c1-b862-da547a8cbd6b
 exercise(4, md"Construct a cross table for the number of persons killed by the contributing factors of vehicle one. Collapse the contributing factors with a count of less than 100 to “other”. Is there any association between the contributing factors and the number of persons killed?")
@@ -140,16 +158,12 @@ end
 # Weak evidence of association between :factor1 and :nkilled
 ChisqTest(cross_table)
 
-# ╔═╡ 3881c9dd-ff8c-45f7-aa03-74dfe35506ba
-
-
 # ╔═╡ 5ff69001-b1f9-4545-a3cb-1c73ff6df77a
 exercise(5, md"Create a new variable death which is one if the number of persons killed is 1 or more; and zero otherwise. Construct a cross table for death versus borough. Test the null hypothesis that the two variables are not associated.")
 
 # ╔═╡ d6155a22-b3b9-4a6e-988a-71a2f880c0ef
 md"""
-- We cannot answer this question until we decide what to do with the missing values for `BOROUGH`.
-- Let's include them as a group.
+- We cannot answer this question until we decide what to do with the missing values for `BOROUGH`.  **Let's include missing values as their own group.**
 """
 
 # ╔═╡ bc667107-a348-43b6-a19a-ed8de2fb269a
@@ -159,65 +173,89 @@ begin
 	death_vs_borough = freqtable(df, :BOROUGH2, :death)
 end
 
-# ╔═╡ 53627488-f791-461a-b11e-326f612ed136
-Matrix(death_vs_borough)
-
-# ╔═╡ b27d4f0f-5714-400b-a60b-eb1dfca05d13
-# Hmm, why DomainError?
-ChisqTest(death_vs_borough)
-
-# ╔═╡ 14ead7fa-677d-4b79-abf1-b13a0a6c7e1e
-let 
-	O = Matrix(death_vs_borough)
-	E = sum(O, dims=1) .* sum(O, dims=2) ./ sum(O)
-	sum((o - e) ^ 2 / e for (o,e) in zip(O,E))
+# ╔═╡ 924f7efc-4872-4ad7-a367-d119de956806
+begin 
+	death_vs_borough_test = ChisqTest(death_vs_borough);
+	md"""
+	#### Test for Association between "Death" and "Borough"
+	- Test Statistic: $(death_vs_borough_test.stat)
+	- DoF: $(death_vs_borough_test.df)
+	- N: $(death_vs_borough_test.n)
+	- P-value: $(pvalue(death_vs_borough_test))
+	"""
 end
+
+# ╔═╡ 13657bc4-22d8-4734-bd60-f74fedd35282
+md"""
+### Side Quest: HypothesisTests.jl bug
+
+- Unfortunately there is a [bug in HypothesisTest.jl's code for confidence intervals](https://github.com/JuliaStats/HypothesisTests.jl/issues/125)!
+  - Confidence intervals get printed in the results for `ChisqTest`, so we get an error when we try to display `ChisqTest(death_vs_borough)`.
+- So let's "cheat" and use R via [RCall.jl](https://github.com/JuliaInterop/RCall.jl).
+"""
+
+# ╔═╡ 8c8b591e-aee7-43a8-9282-b311c6b7064e
+@rput death_vs_borough;
+
+# ╔═╡ e60fba21-4d84-4d5e-a208-1e16442d3ca7
+R"chisq.test(death_vs_borough)"
 
 # ╔═╡ b5beea57-a135-48f2-b47b-6afe4e0b9433
 exercise(6, md"Visualize the crashes using their latitude and longitude (and time, possibly in an animation).")
 
+# ╔═╡ cebe0d80-e283-4dc0-8eed-727db55d0c47
+md"- First, let's look at the boroughs on a map."
+
+# ╔═╡ 8a33fbd4-023f-41da-828c-d91ea597a390
+HTML("""
+<p><a href="https://commons.wikimedia.org/wiki/File:5_Boroughs_Labels_New_York_City_Map.svg#/media/File:5_Boroughs_Labels_New_York_City_Map.svg"><img src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/5_Boroughs_Labels_New_York_City_Map.svg/1200px-5_Boroughs_Labels_New_York_City_Map.svg.png" alt="5 Boroughs Labels New York City Map.svg" height=400></a>
+""")
+
 # ╔═╡ 687529e2-f44a-42de-aa3b-2e5947d5f673
 md"""
-- Downloaded GeoJSON of Borough boundaries [here](https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm).
+- GeoJSON of Borough boundaries can be downloaded [here](https://data.cityofnewyork.us/City-Government/Borough-Boundaries/tqmj-j8zm).
 """
 
 # ╔═╡ 91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
-features = GeoJSON.read(read(joinpath(@__DIR__, "data", "boundaries.geojson")))
-
-# ╔═╡ ba735e38-e73d-479b-86ae-8a0b4fea54be
-
-
-# ╔═╡ c7b372c4-456d-43da-8521-61ccbce0532c
-let 
-	# create map to plot over
+begin
+	features = GeoJSON.read(read(joinpath(@__DIR__, "data", "boundaries.geojson")))
 	borough_map = plot()
 	for g in features.geometry 
-		plot!(borough_map, g, fillalpha=0, aspect_ratio=1)
+		plot!(borough_map, g, fillalpha=0, lw=1, linealpha=.5, aspect_ratio=1.3)
 	end
+	md"(get map data)"
+end
 
+# ╔═╡ 8990fd03-281c-40ca-88ef-9fc3cc8e22a7
+md"""#### Begin Animation: 
+
+$(@bind _hour Clock(1, true))
+"""
+
+# ╔═╡ 97b31aac-95fd-46f3-98ac-e3cbe835ff98
+let 
+	t = (_hour-1) % 24
 	# filter out bad values of lat/lon
-	df2 = filter(df) do row 
-		!ismissing(row.LONGITUDE) && row.LONGITUDE > 0
-			!ismissing(row.LATITUDE) && row.LATITUDE > 0
-			
+	subset = filter(df) do row 
+		!ismissing(row.LONGITUDE) && row.LONGITUDE != 0 &&
+		!ismissing(row.LATITUDE) && row.LATITUDE != 0 &&
+		row.hour == t
 	end
 
-	# Create animation (1 hour/frame)
-	anim = @animate for i in 0:23
-		subset = filter(row -> row.hour == i, df2)
-		plot(borough_map)
-		scatter!(subset.LONGITUDE, df2.LATITUDE; title="Crashes in hour $i", 
-			label="", xlab="Longitude", ylab="Latitude", markerstrokewidth=0, markersize=3)
-	end
-	gif(anim, fps=4)
+	p = plot(borough_map)
+	scatter!(p, subset.LONGITUDE, subset.LATITUDE; title="Crashes in hour $t", 
+		label="", xlab="Longitude", ylab="Latitude", markerstrokewidth=0, markersize=3)
 end
 
 # ╔═╡ 7bfa4449-f2d8-4692-b626-20cf35e8d4be
 exercise(7, md"Fit a logistic model with death as the outcome variable and covariates that are available in the data or can be engineered from the data. Example covariates are crash hour, borough, number of vehicles involved, etc. Interprete your results.")
 
+# ╔═╡ d0021a19-03e7-4d00-8aca-52ab233b590d
+md"- Note: there are only $(sum(df.death)) deaths in the entire dataset of $(nrow(df)) observations."
+
 # ╔═╡ 5cf3f941-3bf0-4698-bdfc-10fa10df2184
 logmodel = let 
-	f = @formula(death ~ hour + BOROUGH)
+	f = @formula(death ~ factor1)
 	glm(f, df, Binomial())
 end
 
@@ -240,24 +278,27 @@ exercise(9, md"Visualize and model the count of crashes at the zip-code level.")
 # ╟─7aae64cb-3888-4d79-898f-65ccfb17a5d8
 # ╟─e71c369b-2aaf-43bd-be96-c183ac1b098c
 # ╟─2c967d81-6ee6-483a-9b7b-aa137f9bd409
-# ╟─bc6a445e-85e2-4217-8261-3d1250460480
-# ╠═89d270f1-95ec-491e-a007-5ddcdc2e642d
+# ╠═bc6a445e-85e2-4217-8261-3d1250460480
+# ╟─89d270f1-95ec-491e-a007-5ddcdc2e642d
 # ╟─54c2966f-0152-49c1-b862-da547a8cbd6b
 # ╟─364dc26c-b994-4a06-9e37-ac9a5d4f11bb
-# ╠═e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
-# ╠═3881c9dd-ff8c-45f7-aa03-74dfe35506ba
+# ╟─e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
 # ╟─5ff69001-b1f9-4545-a3cb-1c73ff6df77a
 # ╟─d6155a22-b3b9-4a6e-988a-71a2f880c0ef
-# ╠═bc667107-a348-43b6-a19a-ed8de2fb269a
-# ╠═53627488-f791-461a-b11e-326f612ed136
-# ╠═b27d4f0f-5714-400b-a60b-eb1dfca05d13
-# ╠═14ead7fa-677d-4b79-abf1-b13a0a6c7e1e
+# ╟─bc667107-a348-43b6-a19a-ed8de2fb269a
+# ╟─924f7efc-4872-4ad7-a367-d119de956806
+# ╟─13657bc4-22d8-4734-bd60-f74fedd35282
+# ╠═8c8b591e-aee7-43a8-9282-b311c6b7064e
+# ╠═e60fba21-4d84-4d5e-a208-1e16442d3ca7
 # ╟─b5beea57-a135-48f2-b47b-6afe4e0b9433
+# ╟─cebe0d80-e283-4dc0-8eed-727db55d0c47
+# ╟─8a33fbd4-023f-41da-828c-d91ea597a390
 # ╟─687529e2-f44a-42de-aa3b-2e5947d5f673
-# ╠═91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
-# ╠═ba735e38-e73d-479b-86ae-8a0b4fea54be
-# ╟─c7b372c4-456d-43da-8521-61ccbce0532c
+# ╟─91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
+# ╟─8990fd03-281c-40ca-88ef-9fc3cc8e22a7
+# ╟─97b31aac-95fd-46f3-98ac-e3cbe835ff98
 # ╟─7bfa4449-f2d8-4692-b626-20cf35e8d4be
+# ╟─d0021a19-03e7-4d00-8aca-52ab233b590d
 # ╠═5cf3f941-3bf0-4698-bdfc-10fa10df2184
 # ╟─bc33075b-987c-42ce-9a2d-815ba034cad8
 # ╟─1abb1322-1bc3-451b-ae99-a31d4586386b
