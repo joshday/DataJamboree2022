@@ -32,8 +32,9 @@ begin
 	using GeoJSON
 	using GLM
 	using RCall
+	using Shapefile
 	
-	gr()
+	plotly()
 
 	exercise(i, description) = h.div(
 		md"""
@@ -262,11 +263,70 @@ end
 # ╔═╡ bc33075b-987c-42ce-9a2d-815ba034cad8
 exercise(8, md"Aggregate the data to the zip-code level and connect with the census data at the zip-code level.")
 
+# ╔═╡ 5e60806a-ec75-449e-8076-e244941cb901
+begin
+	zip_csv_path = joinpath(@__DIR__, "data", "ACSST5Y2020", 
+		"ACSST5Y2020.S1903_data_with_overlays_2022-04-25T213110.csv")
+	
+	zipdf = CSV.read(zip_csv_path, DataFrame, skipto=3)
+	
+	rename!(zipdf, "S1903_C03_015E" => "MEDIAN_INCOME")
+
+	select!(zipdf, [:NAME, :MEDIAN_INCOME])
+
+	transform!(zipdf, :NAME => ByRow(x -> parse(Int, x[end-4:end])) => :ZIP_CODE)
+
+	md"(Load the zip code data)"
+end
+
+# ╔═╡ d6f66c41-cc75-45e0-a902-3d0538775b60
+begin
+	shp_path = joinpath(@__DIR__, "data", "ZIP_CODE_040114", "ZIP_CODE_040114.shp")
+	shp_df = DataFrame(Shapefile.Table(shp_path))
+	unique_zips = unique(skipmissing(df.ZIP_CODE))
+
+	# filter only those zip codes that we have in our dataset
+	filter!(row -> parse(Int, row.ZIPCODE) in unique_zips, shp_df)
+
+	# Only select the fields we want
+	select!(shp_df, [:geometry, :ZIPCODE])
+
+	# Convert `String` to `Int` for zip codes
+	transform!(shp_df, :ZIPCODE => ByRow(x -> parse(Int, x)) => :ZIPCODE)
+	
+	md"(load zip code geometries from Shapefile)"
+end
+
+# ╔═╡ 8339b8f1-4569-4a4b-ac06-f84c4432d8ab
+begin
+	crash_by_zip = combine(groupby(df, :ZIP_CODE), nrow => :count)
+	dropmissing!(crash_by_zip)
+	leftjoin!(crash_by_zip, zipdf, on = :ZIP_CODE)
+	crash_by_zip2 = outerjoin(crash_by_zip, shp_df, on = :ZIP_CODE => :ZIPCODE)
+	dropmissing!(crash_by_zip2)
+end
+
 # ╔═╡ 1abb1322-1bc3-451b-ae99-a31d4586386b
 exercise(9, md"Visualize and model the count of crashes at the zip-code level.")
 
+# ╔═╡ 5c8080f3-bad8-4327-8091-1f11e2c28c82
+let
+	hover = map(eachrow(crash_by_zip2)) do row 
+		"Zip Code: $(row.ZIP_CODE)<br>Crash count: $(row.count)"
+	end
+	plot(crash_by_zip2.geometry; fill_z = crash_by_zip2.count', 
+		color = palette(:viridis),
+		aspect_ratio = 1, 
+	    linecolor = :white, 
+		linewidth = .5, 
+		title = "N Crashes by Zip Code",
+		framestyle = :none, 
+		hover = hover
+	)
+end
+
 # ╔═╡ Cell order:
-# ╟─c17fde86-3846-11ed-08c9-7578912ec511
+# ╠═c17fde86-3846-11ed-08c9-7578912ec511
 # ╟─283ae22b-7d10-45a9-9470-584a996549be
 # ╟─c2d7156f-7d2c-4aa4-8972-610751ade61b
 # ╟─5d7a6d11-d087-4e02-890a-7df1d15d8514
@@ -301,4 +361,8 @@ exercise(9, md"Visualize and model the count of crashes at the zip-code level.")
 # ╟─d0021a19-03e7-4d00-8aca-52ab233b590d
 # ╠═5cf3f941-3bf0-4698-bdfc-10fa10df2184
 # ╟─bc33075b-987c-42ce-9a2d-815ba034cad8
+# ╟─5e60806a-ec75-449e-8076-e244941cb901
+# ╟─d6f66c41-cc75-45e0-a902-3d0538775b60
+# ╠═8339b8f1-4569-4a4b-ac06-f84c4432d8ab
 # ╟─1abb1322-1bc3-451b-ae99-a31d4586386b
+# ╟─5c8080f3-bad8-4327-8091-1f11e2c28c82
