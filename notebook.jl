@@ -48,6 +48,13 @@ begin
 	md"(setup) $(PlutoUI.TableOfContents())"
 end
 
+# ╔═╡ 0269b59d-8b29-410a-b59a-485711f43a59
+md"""
+# Data Jamboree: [Julia](https://julialang.org)
+
+- [https://asa-ssc.github.io/minisymp2022/jamboree/](https://asa-ssc.github.io/minisymp2022/jamboree/)
+"""
+
 # ╔═╡ 283ae22b-7d10-45a9-9470-584a996549be
 md"# Load Data"
 
@@ -230,7 +237,7 @@ end
 # ╔═╡ 8990fd03-281c-40ca-88ef-9fc3cc8e22a7
 md"""#### Begin Animation: 
 
-$(@bind _hour Clock(1, true))
+$(@bind _hour Clock(2, true))
 """
 
 # ╔═╡ 97b31aac-95fd-46f3-98ac-e3cbe835ff98
@@ -326,6 +333,7 @@ let
 end
 
 # ╔═╡ Cell order:
+# ╟─0269b59d-8b29-410a-b59a-485711f43a59
 # ╟─c17fde86-3846-11ed-08c9-7578912ec511
 # ╟─283ae22b-7d10-45a9-9470-584a996549be
 # ╟─c2d7156f-7d2c-4aa4-8972-610751ade61b
