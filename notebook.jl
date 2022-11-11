@@ -19,13 +19,14 @@ begin
 	using Pkg
 	Pkg.activate(@__DIR__)
 	
-	using StatsPlots
+	using Plots
+	using JSON3
 	using CSV
 	using StatsBase
 	using Dates
 	using DataFrames
 	using PlutoUI
-	using Cobweb: h
+	using Cobweb: Cobweb, h
 	using FreqTables
 	using HypothesisTests
 	using OnlineStats
@@ -33,7 +34,7 @@ begin
 	using GLM
 	using RCall
 	using Shapefile
-	
+
 	plotly()
 
 	exercise(i, description) = h.div(
@@ -43,6 +44,15 @@ begin
 		- $description
 		""";
 		style="border-radius: 5px; padding: 1px 12px 1px 12px; background: #155e75; color: #67e8f9;"
+	)
+
+	warning(text) = h.div(
+		Markdown.parse("""
+		#### Warning
+
+		$text
+		""");
+		style="border-radius: 5px; padding: 1px 12px 1px 12px; background: #fca5a5; color: #b91c1c !important;"
 	)
 	
 	md"(setup) $(PlutoUI.TableOfContents())"
@@ -103,7 +113,7 @@ md"""
 - We then extract the `Dates.hour`.
 """
 
-# ╔═╡ e71c369b-2aaf-43bd-be96-c183ac1b098c
+# ╔═╡ e8caa3d2-c488-4db9-9dd6-9c7705a910d1
 begin 
 	df.datetime = DateTime.(df.CRASH_DATE, Time.(df.CRASH_TIME))
 	df.hour = hour.(df.datetime)
@@ -162,6 +172,9 @@ cross_table = let
 	freqtable(df, :factor1, :nkilled)
 end
 
+# ╔═╡ 0ebce149-2ce6-44ee-8776-f1320f973fba
+warning("When counts are \"small\", the distribution of the test statistic under the null hypothesis is not well-approximated by a chi-square distribution.")
+
 # ╔═╡ e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
 # Weak evidence of association between :factor1 and :nkilled
 ChisqTest(cross_table)
@@ -180,6 +193,9 @@ begin
 	df.BOROUGH2 = string.(df.BOROUGH)
 	death_vs_borough = freqtable(df, :BOROUGH2, :death)
 end
+
+# ╔═╡ 9a1ddeea-69fc-406e-9738-bd3da7f5c598
+warning("Same issue as our previous Chisq test.")
 
 # ╔═╡ 924f7efc-4872-4ad7-a367-d119de956806
 begin 
@@ -322,7 +338,20 @@ begin
 	# Join with geometry/polygon data
 	crash_by_zip2 = outerjoin(crash_by_zip, shp_df, on = :ZIP_CODE => :ZIPCODE)
 	dropmissing!(crash_by_zip2)
+end
 
+# ╔═╡ b8bd50df-a3cb-41d2-b2bd-61f56eaec8be
+let 
+	tmp = filter(row -> !isnothing(row.MEDIAN_INCOME), crash_by_zip2)
+	hover = map(eachrow(crash_by_zip2)) do row
+		"Zip Code:$(row.ZIP_CODE)<br>Median Income: $(row.MEDIAN_INCOME)<br>Crash Count:$(row.count)"
+	end
+	scatter(tmp.MEDIAN_INCOME, tmp.count; lab="", xlab="Median Income of Zip Code",
+		xlim=(0,265_000),
+		title = "Count of Crashes by Median Income of Zip Code",
+		ylab="Count", hover, 
+		xticks=(0:50_000:250_000, ["0", "50k", "100k", "150k", "200k", "250k+"])
+	)
 end
 
 # ╔═╡ 1abb1322-1bc3-451b-ae99-a31d4586386b
@@ -356,16 +385,18 @@ end
 # ╟─6f7c3df2-34f9-4184-801d-7a40f2926246
 # ╟─5a4f9311-5816-4dc1-9840-6f7cc06f23a5
 # ╟─7aae64cb-3888-4d79-898f-65ccfb17a5d8
-# ╟─e71c369b-2aaf-43bd-be96-c183ac1b098c
+# ╟─e8caa3d2-c488-4db9-9dd6-9c7705a910d1
 # ╟─2c967d81-6ee6-483a-9b7b-aa137f9bd409
-# ╠═bc6a445e-85e2-4217-8261-3d1250460480
+# ╟─bc6a445e-85e2-4217-8261-3d1250460480
 # ╟─89d270f1-95ec-491e-a007-5ddcdc2e642d
 # ╟─54c2966f-0152-49c1-b862-da547a8cbd6b
 # ╟─364dc26c-b994-4a06-9e37-ac9a5d4f11bb
+# ╟─0ebce149-2ce6-44ee-8776-f1320f973fba
 # ╟─e3b2ef1c-84fd-43fe-a22c-3dce55d01df2
 # ╟─5ff69001-b1f9-4545-a3cb-1c73ff6df77a
 # ╟─d6155a22-b3b9-4a6e-988a-71a2f880c0ef
 # ╟─bc667107-a348-43b6-a19a-ed8de2fb269a
+# ╟─9a1ddeea-69fc-406e-9738-bd3da7f5c598
 # ╟─924f7efc-4872-4ad7-a367-d119de956806
 # ╟─13657bc4-22d8-4734-bd60-f74fedd35282
 # ╠═8c8b591e-aee7-43a8-9282-b311c6b7064e
@@ -374,7 +405,7 @@ end
 # ╟─cebe0d80-e283-4dc0-8eed-727db55d0c47
 # ╟─8a33fbd4-023f-41da-828c-d91ea597a390
 # ╟─687529e2-f44a-42de-aa3b-2e5947d5f673
-# ╟─91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
+# ╠═91a3b321-5ba6-4cd6-bfe6-555dcde75b2c
 # ╟─8990fd03-281c-40ca-88ef-9fc3cc8e22a7
 # ╟─97b31aac-95fd-46f3-98ac-e3cbe835ff98
 # ╟─7bfa4449-f2d8-4692-b626-20cf35e8d4be
@@ -384,5 +415,6 @@ end
 # ╟─5e60806a-ec75-449e-8076-e244941cb901
 # ╟─d6f66c41-cc75-45e0-a902-3d0538775b60
 # ╟─8339b8f1-4569-4a4b-ac06-f84c4432d8ab
+# ╟─b8bd50df-a3cb-41d2-b2bd-61f56eaec8be
 # ╟─1abb1322-1bc3-451b-ae99-a31d4586386b
 # ╟─5c8080f3-bad8-4327-8091-1f11e2c28c82
