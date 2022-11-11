@@ -35,5 +35,8 @@ jobs:
           arch: ${{ matrix.arch }}
 
       - name: Instantiate
-        run: julia --project=. -e 'using Pkg. Pkg.activate("."); Pkg.instantiate()'
+        run: julia --project=. -e 'using Pkg. Pkg.instantiate()'
+
+      - name: Include notebook
+        run: julia --project=. -e 'include("startup.jl")'
 name: CI
