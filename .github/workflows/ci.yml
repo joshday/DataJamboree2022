@@ -39,4 +39,4 @@ jobs:
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
       - name: Include notebook
-        run: julia --project=. -e 'include("startup.jl")'
+        run: julia --project=. -e 'include(joinpath("DataJamboree2022", "startup.jl"))'

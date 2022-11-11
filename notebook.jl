@@ -237,7 +237,7 @@ end
 # ╔═╡ 8990fd03-281c-40ca-88ef-9fc3cc8e22a7
 md"""#### Begin Animation: 
 
-$(@bind _hour Clock(2, true))
+$(@bind _hour Clock(2))
 """
 
 # ╔═╡ 97b31aac-95fd-46f3-98ac-e3cbe835ff98
@@ -281,9 +281,15 @@ begin
 
 	select!(zipdf, [:NAME, :MEDIAN_INCOME])
 
-	transform!(zipdf, :NAME => ByRow(x -> parse(Int, x[end-4:end])) => :ZIP_CODE)
+	# Parse Strings into Numbers
+	transform!(zipdf, 
+		:NAME => ByRow(x -> parse(Int, x[end-4:end])) => :ZIP_CODE,
+		:MEDIAN_INCOME => 
+			ByRow(x -> tryparse(Int, replace(x, ','=>"", '+'=>""))) =>
+			:MEDIAN_INCOME
+	)
 
-	md"(Load the zip code data)"
+	md"(Load the median income by zip code data)"
 end
 
 # ╔═╡ d6f66c41-cc75-45e0-a902-3d0538775b60
@@ -301,16 +307,22 @@ begin
 	# Convert `String` to `Int` for zip codes
 	transform!(shp_df, :ZIPCODE => ByRow(x -> parse(Int, x)) => :ZIPCODE)
 	
-	md"(load zip code geometries from Shapefile)"
+	md"(load zip code geometries from shapefile)"
 end
 
 # ╔═╡ 8339b8f1-4569-4a4b-ac06-f84c4432d8ab
 begin
+	# Get count of crashes by zip code
 	crash_by_zip = combine(groupby(df, :ZIP_CODE), nrow => :count)
 	dropmissing!(crash_by_zip)
+
+	# Join with median income data
 	leftjoin!(crash_by_zip, zipdf, on = :ZIP_CODE)
+
+	# Join with geometry/polygon data
 	crash_by_zip2 = outerjoin(crash_by_zip, shp_df, on = :ZIP_CODE => :ZIPCODE)
 	dropmissing!(crash_by_zip2)
+
 end
 
 # ╔═╡ 1abb1322-1bc3-451b-ae99-a31d4586386b
@@ -371,6 +383,6 @@ end
 # ╟─bc33075b-987c-42ce-9a2d-815ba034cad8
 # ╟─5e60806a-ec75-449e-8076-e244941cb901
 # ╟─d6f66c41-cc75-45e0-a902-3d0538775b60
-# ╠═8339b8f1-4569-4a4b-ac06-f84c4432d8ab
+# ╟─8339b8f1-4569-4a4b-ac06-f84c4432d8ab
 # ╟─1abb1322-1bc3-451b-ae99-a31d4586386b
 # ╟─5c8080f3-bad8-4327-8091-1f11e2c28c82
