@@ -4,4 +4,5 @@
 
 ## Running the Notebooks
 
-- Run `include("startup.jl")` in the Julia REPL.
+1. `git clone https://github.com/joshday/DataJamboree2022`
+2. Run `include("startup.jl")` in the Julia REPL.
