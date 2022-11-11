@@ -39,4 +39,3 @@ jobs:
 
       - name: Include notebook
         run: julia --project=. -e 'include("startup.jl")'
-name: CI
